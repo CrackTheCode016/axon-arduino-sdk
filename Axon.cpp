@@ -11,20 +11,19 @@ Axon::Axon(String node, String genHash, String privateKey, String deviceId) {
 void Axon::init() {
   String data = _serial->readString();
   while (!Axon::isHandshake(data)) {
-  Axon::requestInit();
-  delay(1000);
-  data = _serial->readString(); 
-  if (Axon::isHandshake(data)) {
-  HandshakeMessage message = toHandshake(data);
-  if (message == HandshakeMessage::Connect) {
-    sendHandshakeResponse(HandshakeMessage::ConnectionAccepted);
-    log(String("Device connected with status " + _connectionStatus.status));
-    delay(5000);
-    Axon::notifyState();
-    sendHandshakeResponse(HandshakeMessage::ConnectionClosed);
-    break;
-    }   
-   }
+    Axon::requestInit();
+    delay(1000);
+    data = _serial->readString();
+    if (Axon::isHandshake(data)) {
+      HandshakeMessage message = toHandshake(data);
+      if (message == HandshakeMessage::Connect) {
+        sendHandshakeResponse(HandshakeMessage::ConnectionAccepted);
+        log(String("Device connected with status " + _connectionStatus.status));
+        Axon::notifyState();
+        sendHandshakeResponse(HandshakeMessage::ConnectionClosed);
+        break;
+      }
+    }
   }
 }
 
@@ -47,7 +46,7 @@ void Axon::notifyState() {
 }
 
 void Axon::send(Record record, RecordType recordType) {
-  const size_t capacity = JSON_OBJECT_SIZE(6) + 110;
+  const size_t capacity = JSON_OBJECT_SIZE(7) + 202;
   DynamicJsonDocument doc(capacity);
   doc["node"] = record.node;
   doc["data"] = record.data;
@@ -56,7 +55,7 @@ void Axon::send(Record record, RecordType recordType) {
   doc["recordType"] = static_cast<char>(recordType);
   doc["sensorName"] = record.sensorName;
   doc["encrypted"] = record.encrypted;
-  
+
   String output;
   serializeJson(doc, output);
   _serial->println(output);
@@ -104,8 +103,6 @@ Command Axon::watch() {
   return command;
 }
 
-
-
 template <typename T>
 void Axon::setAxonStatus(T update, AxonStatus<T>& status) {
   status.status = update;
@@ -135,7 +132,6 @@ void Axon::sendHandshakeResponse(HandshakeMessage code) {
   _serial->print("\n");
   setAxonStatus<HandshakeMessage>(code, _connectionStatus);
 }
-
 
 void Axon::requestInit() {
   _serial->print("I");
