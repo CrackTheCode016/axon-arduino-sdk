@@ -16,7 +16,7 @@ void Axon::init() {
                               AxonMessageType::StateMessage};
   while (true) {
     Axon::sendHandshakeRequest(request);
-    delay(1000);
+    delay(2000);
     String data = _serial->readString();
     if (Axon::isHandshake(data)) {
       HandshakeResponse response = toHandshakeResponse(data);
@@ -72,9 +72,23 @@ String Axon::serializeState() {
 }
 
 void Axon::send(Record record, RecordType type) {
-  String serialized = Axon::serializeRecord(record, type);
-  _serial->println(serialized);
-  log(String("Record sent for " + record.sensorName));
+  HandshakeRequest request = {AxonHandshakeType::HandshakeConnect,
+                              AxonMessageType::StateMessage};
+  while (true) {
+    Axon::sendHandshakeRequest(request);
+    delay(2000);
+    String data = _serial->readString();
+    if (Axon::isHandshake(data)) {
+      HandshakeResponse response = toHandshakeResponse(data);
+      if (response.handshakeType == AxonHandshakeType::HandshakeAccept) {
+        log(String("Device connected with status " + _connectionStatus.status));
+        String serialized = Axon::serializeRecord(record, type);
+        _serial->println(serialized);
+        log(String("Record sent for " + record.sensorName));
+        break;
+      }
+    }
+  }
 }
 
 void Axon::log(String message) {
