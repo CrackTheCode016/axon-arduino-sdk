@@ -45,10 +45,10 @@ String Axon::serializeRecord(Record record, RecordType type) {
       JSON_OBJECT_SIZE(RECORD_OBJ_SIZE) + RECORD_EXTRA_BYTES_AMOUNT;
 
   DynamicJsonDocument doc(capacity);
-  doc["node"] = record.node;
+  doc["node"] = *record.node;
   doc["data"] = record.data;
   doc["deviceId"] = _deviceId;
-  doc["recipient"] = record.recipient;
+  doc["recipient"] = *record.recipient;
   doc["recordType"] = static_cast<char>(type);
   doc["sensorName"] = record.sensorName;
   doc["encrypted"] = record.encrypted;
@@ -62,9 +62,9 @@ String Axon::serializeState() {
   const size_t capacity =
       JSON_OBJECT_SIZE(STATE_OBJ_SIZE) + STATE_EXTRA_BYTES_AMOUNT;
   DynamicJsonDocument doc(capacity);
-  doc["ownerPublicKey"] = _ownerPublicKey;
-  doc["genHash"] = _genHash;
-  doc["node"] = _node;
+  doc["ownerPublicKey"] = *_ownerPublicKey;
+  doc["genHash"] = *_genHash;
+  doc["nodeIp"] = *_node;
 
   String output;
   serializeJson(doc, output);
@@ -73,7 +73,7 @@ String Axon::serializeState() {
 
 void Axon::send(Record record, RecordType type) {
   HandshakeRequest request = {AxonHandshakeType::HandshakeConnect,
-                              AxonMessageType::StateMessage};
+                              AxonMessageType::RecordMessage};
   while (true) {
     Axon::sendHandshakeRequest(request);
     delay(2000);
@@ -181,8 +181,8 @@ void Axon::sendHandshakeRequest(HandshakeRequest request) {
   const size_t capacity = JSON_OBJECT_SIZE(HANDSHAKE_REQUEST_OBJ_SIZE) +
                           HANDSHAKE_EXTRA_BYTES_AMOUNT;
   DynamicJsonDocument doc(capacity);
-  doc["handshakeType"] = request.handshakeType;
-  doc["messageType"] = request.messageType;
+  doc["handshakeType"] = static_cast<int>(request.handshakeType);
+  doc["messageType"] = static_cast<int>(request.messageType);
   String output;
   serializeJson(doc, output);
   _serial->println(output);
