@@ -1,35 +1,46 @@
-#include "Arduino.h"
+#pragma once
+
+#include <Arduino.h>
 #include "ArduinoJson.h"
+#include "types.h"
 
 enum SensorCommand {
   ON = 0x01,
   OFF = 0x0,
 };
 
-struct CommandResponse {
-  String operation;
-  bool status;
-  int pin;
-};
-
 struct Command {
-  String operation;
+  String operationDescription;
+  int currencyAmount;
   int command;
   int pin;
 };
 
-enum HandshakeMessage {
-  Connect = 0x01,
-  ConnectionAccepted = 0x02,
-  ConnectionRefused = 0x03,
-  ConnectionClosed = 0x04
+struct CommandResponse {
+  Command command;
+  bool status;
 };
 
-enum RecordType { Simple = 'S', Multi = 'M' };
+enum AxonHandshakeType { HandshakeConnect = 18499, HandshakeAccept = 18497 };
+enum AxonMessageType {
+  RecordMessage = 0,
+  StateMessage = 1,
+  CommandMessage = 2
+};
+enum RecordType { Simple = 83, Multi = 78 };
+
+struct HandshakeRequest {
+  AxonHandshakeType handshakeType;
+  AxonMessageType messageType;
+};
+
+struct HandshakeResponse {
+  AxonHandshakeType handshakeType;
+};
 
 struct Record {
-  String node;
-  String recipient;
+  Node* node;
+  Address* recipient;
   String data;
   String sensorName;
   bool encrypted;
@@ -42,32 +53,41 @@ struct AxonStatus {
 
 class Axon {
  public:
-  Axon(String node, String genHash, String privateKey, String deviceId);
+  Axon(Node* node,
+       GenerationHash* genHash,
+       Key* ownerPublicKey,
+       String deviceId);
 
   /* Starts a serial stream with a serial stream object */
   void begin(Stream& serial);
 
-  /* Writes to the serial port */
-  void send(Record record, RecordType recordType);
+  /* Writes a record to the serial port */
+  void send(Record record, RecordType type);
+
+  // Notifies the host of a state config change
+  void notifyState();
 
   /* Gets the last known status of Axon (handshake, command response) */
-  AxonStatus<HandshakeMessage>& getConnectionStatus();
+  AxonStatus<AxonHandshakeType>& getConnectionStatus();
   AxonStatus<CommandResponse>& getCommandStatus();
 
   /* Watches (reads) the Serial stream, and parses a command.
   The function takes in an array of pins, which it then will trigger if it
   senses a command for that specific pin.
-  If it's a handhshake, it handles that too. */
+  If it's a handshake, it handles that too. */
   Command watch();
-
-  // Converts a string to a handshake struct
-  HandshakeMessage toHandshake(String data);
 
   // Checks if a string is handshake
   bool isHandshake(String data);
 
-  // Conerts a string into a command struct
-  Command toCommand(String data);
+  // Serializes a record
+  String serializeRecord(Record record, RecordType type);
+
+  // Serializes state
+  String serializeState();
+
+  // Parses a command into a record
+  Command toCommand(String input);
 
   // Checks if a string is command
   bool isCommand(String data);
@@ -75,17 +95,22 @@ class Axon {
   // Executes a given command
   void executeCommand(Command command);
 
-
-  void notifyState();
-
+  // init process
   void init();
 
-  void requestInit();
-
   // send a response to a handshake in the serial port
-  void sendHandshakeResponse(HandshakeMessage code);
+  void sendHandshakeResponse(HandshakeResponse response);
 
-  // send an acknowledgement that the command was recieved
+  // send a request for a handshake in the serial port
+  void sendHandshakeRequest(HandshakeRequest request);
+
+  //
+  HandshakeResponse toHandshakeResponse(String input);
+
+  //
+  HandshakeRequest toHandshakeRequest(String input);
+
+  // send an acknowledgement that the command was received
   void sendCommandResponse(CommandResponse response);
 
   // enables or disables debug
@@ -98,12 +123,13 @@ class Axon {
  private:
   Stream* _serial;
   Stream* _usbSerial;
-  String _node;
+  Node* _node;
   String _deviceId;
-  String _genHash;
-  String _privateKey;
+  GenerationHash* _genHash;
+  Key* _ownerPublicKey;
   bool _logging;
   void log(String message);
-  AxonStatus<HandshakeMessage> _connectionStatus;
+  AxonStatus<AxonHandshakeType> _connectionStatus;
   AxonStatus<CommandResponse> _commandStatus;
+  AxonStatus<Record> _recordStatus;
 };

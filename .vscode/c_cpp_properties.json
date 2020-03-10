@@ -3,8 +3,11 @@
         {
             "name": "Mac",
             "includePath": [
-                "/Users/bader/Documents/Coding/thread-count/arduino/Axon/src",
-                "/Users/bader/Downloads/Arduino.app/Contents/Java/hardware/arduino/avr/cores/arduino"
+                "/Users/bader/Downloads/Arduino.app/Contents/Java/hardware/tools",
+                "/Users/bader/Documents/Arduino/libraries/Axon",
+                "/Users/bader/Downloads/Arduino.app/Contents/Java/hardware/tools/avr/avr/include",
+                "/Users/bader/Downloads/Arduino.app/Contents/Java/hardware/arduino/avr/cores/arduino",
+                "/Users/bader/Documents/Arduino/libraries/Axon/"
             ],
             "macFrameworkPath": [
                 "/System/Library/Frameworks",
@@ -13,7 +16,7 @@
             "intelliSenseMode": "clang-x64",
             "compilerPath": "/usr/bin/clang",
             "cStandard": "c11",
-            "cppStandard": "c++17"
+            "cppStandard": "c++11"
         }
     ],
     "version": 4

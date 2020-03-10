@@ -1,26 +1,28 @@
 #include "Axon.h"
 
-Axon::Axon(String node, String genHash, String privateKey, String deviceId) {
+Axon::Axon(Node* node,
+           GenerationHash* genHash,
+           Key* ownerPublicKey,
+           String deviceId) {
   _node = node;
-  _privateKey = privateKey;
+  _ownerPublicKey = ownerPublicKey;
   _genHash = genHash;
   _usbSerial = &Serial;
   _deviceId = deviceId;
 }
 
 void Axon::init() {
-  String data = _serial->readString();
-  while (!Axon::isHandshake(data)) {
-    Axon::requestInit();
-    delay(1000);
-    data = _serial->readString();
+  HandshakeRequest request = {AxonHandshakeType::HandshakeConnect,
+                              AxonMessageType::StateMessage};
+  while (true) {
+    Axon::sendHandshakeRequest(request);
+    delay(2000);
+    String data = _serial->readString();
     if (Axon::isHandshake(data)) {
-      HandshakeMessage message = toHandshake(data);
-      if (message == HandshakeMessage::Connect) {
-        sendHandshakeResponse(HandshakeMessage::ConnectionAccepted);
+      HandshakeResponse response = toHandshakeResponse(data);
+      if (response.handshakeType == AxonHandshakeType::HandshakeAccept) {
         log(String("Device connected with status " + _connectionStatus.status));
         Axon::notifyState();
-        sendHandshakeResponse(HandshakeMessage::ConnectionClosed);
         break;
       }
     }
@@ -34,32 +36,59 @@ void Axon::begin(Stream& serial) {
 }
 
 void Axon::notifyState() {
-  const size_t capacity = JSON_OBJECT_SIZE(3) + 190;
-  DynamicJsonDocument doc(capacity);
-  doc["user_private_key"] = _privateKey;
-  doc["node_ip"] = _node;
-  doc["gen_hash"] = _genHash;
-  String output;
-  output.concat("SI");
-  serializeJson(doc, output);
-  _serial->println(output);
+  String state = Axon::serializeState();
+  _serial->println(state);
 }
 
-void Axon::send(Record record, RecordType recordType) {
-  const size_t capacity = JSON_OBJECT_SIZE(7) + 202;
+String Axon::serializeRecord(Record record, RecordType type) {
+  const size_t capacity =
+      JSON_OBJECT_SIZE(RECORD_OBJ_SIZE) + RECORD_EXTRA_BYTES_AMOUNT;
+
   DynamicJsonDocument doc(capacity);
-  doc["node"] = record.node;
+  doc["node"] = *record.node;
   doc["data"] = record.data;
   doc["deviceId"] = _deviceId;
-  doc["recipient"] = record.recipient;
-  doc["recordType"] = static_cast<char>(recordType);
+  doc["recipient"] = *record.recipient;
+  doc["recordType"] = static_cast<char>(type);
   doc["sensorName"] = record.sensorName;
   doc["encrypted"] = record.encrypted;
 
   String output;
   serializeJson(doc, output);
-  _serial->println(output);
-  log(String("Record sent for " + record.sensorName));
+  return output;
+}
+
+String Axon::serializeState() {
+  const size_t capacity =
+      JSON_OBJECT_SIZE(STATE_OBJ_SIZE) + STATE_EXTRA_BYTES_AMOUNT;
+  DynamicJsonDocument doc(capacity);
+  doc["ownerPublicKey"] = *_ownerPublicKey;
+  doc["genHash"] = *_genHash;
+  doc["nodeIp"] = *_node;
+
+  String output;
+  serializeJson(doc, output);
+  return output;
+}
+
+void Axon::send(Record record, RecordType type) {
+  HandshakeRequest request = {AxonHandshakeType::HandshakeConnect,
+                              AxonMessageType::RecordMessage};
+  while (true) {
+    Axon::sendHandshakeRequest(request);
+    delay(2000);
+    String data = _serial->readString();
+    if (Axon::isHandshake(data)) {
+      HandshakeResponse response = toHandshakeResponse(data);
+      if (response.handshakeType == AxonHandshakeType::HandshakeAccept) {
+        log(String("Device connected with status " + _connectionStatus.status));
+        String serialized = Axon::serializeRecord(record, type);
+        _serial->println(serialized);
+        log(String("Record sent for " + record.sensorName));
+        break;
+      }
+    }
+  }
 }
 
 void Axon::log(String message) {
@@ -73,12 +102,13 @@ void Axon::debug(bool option) {
 
 Command Axon::watch() {
   Command command;
+  HandshakeResponse response = {AxonHandshakeType::HandshakeAccept};
   String data = _serial->readString();
   if (Axon::isHandshake(data)) {
     log(String("Handshake detected."));
-    HandshakeMessage message = toHandshake(data);
-    if (message == HandshakeMessage::Connect) {
-      sendHandshakeResponse(HandshakeMessage::ConnectionAccepted);
+    HandshakeRequest message = toHandshakeRequest(data);
+    if (message.handshakeType == AxonHandshakeType::HandshakeConnect) {
+      sendHandshakeResponse(response);
       log(String("Device connected with status " + _connectionStatus.status));
       delay(1000);
       while (_serial->available() == 0) {
@@ -88,16 +118,7 @@ Command Axon::watch() {
       if (Axon::isCommand(expectedCommand)) {
         log(String("Command detected: " + expectedCommand));
         command = Axon::toCommand(expectedCommand);
-        sendHandshakeResponse(HandshakeMessage::ConnectionClosed);
       }
-
-      else {
-        sendHandshakeResponse(HandshakeMessage::ConnectionClosed);
-      }
-    }
-
-    else {
-      sendHandshakeResponse(HandshakeMessage::ConnectionRefused);
     }
   }
   return command;
@@ -108,15 +129,45 @@ void Axon::setAxonStatus(T update, AxonStatus<T>& status) {
   status.status = update;
 }
 
-AxonStatus<HandshakeMessage>& Axon::getConnectionStatus() {
+AxonStatus<AxonHandshakeType>& Axon::getConnectionStatus() {
   return _connectionStatus;
 }
 
 // Handshake
 
-HandshakeMessage Axon::toHandshake(String data) {
-  String handshake = data.substring(1, data.length());
-  return static_cast<HandshakeMessage>(handshake.toInt());
+HandshakeResponse Axon::toHandshakeResponse(String input) {
+  const size_t capacity = JSON_OBJECT_SIZE(HANDSHAKE_RESPONSE_OBJ_SIZE) +
+                          HANDSHAKE_EXTRA_BYTES_AMOUNT;
+  String dataString = input.substring(1, input.length());
+  StaticJsonDocument<capacity> doc;
+  DeserializationError err = deserializeJson(doc, dataString);
+  if (err == DeserializationError::Ok) {
+    log(String("parsed successfully"));
+  } else {
+    log(String("failure: not valid json"));
+  }
+
+  HandshakeResponse response = {
+      static_cast<AxonHandshakeType>(doc["handshakeType"].as<int>())};
+  return response;
+}
+
+HandshakeRequest Axon::toHandshakeRequest(String input) {
+  const size_t capacity = JSON_OBJECT_SIZE(HANDSHAKE_REQUEST_OBJ_SIZE) +
+                          HANDSHAKE_EXTRA_BYTES_AMOUNT;
+  String dataString = input.substring(1, input.length());
+  StaticJsonDocument<capacity> doc;
+  DeserializationError err = deserializeJson(doc, dataString);
+  if (err == DeserializationError::Ok) {
+    log(String("parsed successfully"));
+  } else {
+    log(String("failure: not valid json"));
+  }
+  HandshakeRequest request = {
+      static_cast<AxonHandshakeType>(doc["handshakeType"].as<int>()),
+      static_cast<AxonMessageType>(doc["messageType"].as<int>())};
+
+  return request;
 }
 
 bool Axon::isHandshake(String data) {
@@ -126,27 +177,35 @@ bool Axon::isHandshake(String data) {
   return false;
 }
 
-void Axon::sendHandshakeResponse(HandshakeMessage code) {
-  _serial->print("H");
-  _serial->print(code);
-  _serial->print("\n");
-  setAxonStatus<HandshakeMessage>(code, _connectionStatus);
+void Axon::sendHandshakeRequest(HandshakeRequest request) {
+  const size_t capacity = JSON_OBJECT_SIZE(HANDSHAKE_REQUEST_OBJ_SIZE) +
+                          HANDSHAKE_EXTRA_BYTES_AMOUNT;
+  DynamicJsonDocument doc(capacity);
+  doc["handshakeType"] = static_cast<int>(request.handshakeType);
+  doc["messageType"] = static_cast<int>(request.messageType);
+  String output;
+  serializeJson(doc, output);
+  _serial->println(output);
 }
 
-void Axon::requestInit() {
-  _serial->print("I");
-  _serial->print(1);
-  _serial->print("\n");
+void Axon::sendHandshakeResponse(HandshakeResponse response) {
+  const size_t capacity = JSON_OBJECT_SIZE(HANDSHAKE_RESPONSE_OBJ_SIZE) +
+                          HANDSHAKE_EXTRA_BYTES_AMOUNT;
+  DynamicJsonDocument doc(capacity);
+  doc["handshakeType"] = response.handshakeType;
+  String output;
+  serializeJson(doc, output);
+  _serial->println(output);
 }
 
 // Commands
 
-Command Axon::toCommand(String data) {
-  const int capacity = JSON_OBJECT_SIZE(8);
+Command Axon::toCommand(String input) {
+  const size_t capacity =
+      JSON_OBJECT_SIZE(COMMAND_OBJ_SIZE) + COMMAND_EXTRA_BYTES_AMOUNT;
+  String dataString = input.substring(1, input.length());
   StaticJsonDocument<capacity> doc;
-  String commandString = data.substring(1, data.length());
-
-  DeserializationError err = deserializeJson(doc, commandString);
+  DeserializationError err = deserializeJson(doc, dataString);
   if (err == DeserializationError::Ok) {
     log(String("parsed successfully"));
   } else {
@@ -157,8 +216,8 @@ Command Axon::toCommand(String data) {
   return command;
 }
 
-bool Axon::isCommand(String data) {
-  if (data.charAt(0) == 'C') {
+bool Axon::isCommand(String input) {
+  if (input.charAt(0) == 'C') {
     return true;
   }
   return false;
@@ -166,7 +225,7 @@ bool Axon::isCommand(String data) {
 
 void Axon::executeCommand(Command command) {
   digitalWrite(command.pin, command.command);
-  CommandResponse response = {command.operation, true, command.pin};
+  CommandResponse response = {command, true};
   sendCommandResponse(response);
 }
 
